@@ -2,21 +2,26 @@
 
 import React from "react";
 import { WagmiProvider, createConfig, http } from "wagmi";
-import { avalancheFuji } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { injected, walletConnect } from "wagmi/connectors";
+import { appChain, SUPPORTED_CHAIN_ID } from "@/config/chains";
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID!;
 const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL!;
 
 const wagmiConfig = createConfig({
-  chains: [avalancheFuji],
+  chains: [appChain],
   connectors: [
-    injected(),
-    walletConnect({ projectId }),
+    injected({
+      target: "metaMask",
+    }),
+    walletConnect({ 
+      projectId,
+      showQrModal: true,
+    }),
   ],
   transports: {
-    [avalancheFuji.id]: http(rpcUrl),
+    [SUPPORTED_CHAIN_ID]: http(rpcUrl),
   },
 });
 

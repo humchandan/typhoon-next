@@ -1,31 +1,41 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextApiRequest, NextApiResponse } from "next";
 import { pool } from "../db";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   const { userId } = req.query;
 
-  if (!userId) return res.status(400).json({ error: "userId required" });
+  if (!userId) {
+    return res.status(400).json({ error: "userId required" });
+  }
 
   try {
-    // Get all users who have this user as sponsor (direct referrals)
+    // Get user's referral ID first
+    const [userRows] = await pool.execute(
+      "SELECT referralId FROM users WHERE id = ?",
+      [userId]
+    );
+
+    if ((userRows as any[]).length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userReferralId = (userRows as any[])[0].referralId;
+
+    // Get all direct referrals (removed createdAt for now)
     const [directReferrals] = await pool.execute(
-      `SELECT id, username, walletAddress, referralId, totalPurchase, directCount, teamSize, createdAt 
-       FROM users WHERE sponsorReferralId = (SELECT referralId FROM users WHERE id = ?)`,
-      [userId]
+      `SELECT id, username, walletAddress, referralId, totalPurchase, directCount, teamSize 
+       FROM users WHERE sponsorReferralId = ?`,
+      [userReferralId]
     );
 
-    // Get total referral count at each level (you can expand this logic)
-    const [levelCounts] = await pool.execute(
-      `SELECT COUNT(*) as count FROM users WHERE sponsorReferralId = (SELECT referralId FROM users WHERE id = ?)`,
-      [userId]
-    );
-
-    res.status(200).json({
+    return res.status(200).json({
       directReferrals,
-      levelCounts,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Database error" });
+    console.error("Error fetching referral tree:", error);
+    return res.status(500).json({ error: "Database error" });
   }
 }

@@ -1,5 +1,6 @@
 import { WagmiWrapper } from "@/components/WagmiWrapper";
 import { Navbar } from "@/components/Navbar";
+import { NetworkCheck } from "@/components/NetworkCheck";
 import "./globals.css";
 
 export const metadata = {
@@ -17,6 +18,7 @@ export default function RootLayout({
       <body style={{ margin: 0, fontFamily: "Arial, sans-serif" }}>
         <WagmiWrapper>
           <Navbar />
+          <NetworkCheck />
           <main>{children}</main>
         </WagmiWrapper>
       </body>

@@ -3,21 +3,34 @@ import { pool } from "../pages/api/db";
 import contractAbi from "../contracts/TyphoonABI.json";
 
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || "https://api.avax-test.network/ext/bc/C/rpc";
+const WS_URL = process.env.NEXT_PUBLIC_WS_RPC_URL || "wss://api.avax-test.network/ext/bc/C/ws";
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
 
 if (!CONTRACT_ADDRESS) {
   throw new Error("CONTRACT_ADDRESS not set in environment");
 }
 
-// Create provider and contract instance
-const provider = new ethers.JsonRpcProvider(RPC_URL);
-const contract = new ethers.Contract(CONTRACT_ADDRESS, contractAbi, provider);
+// Create WebSocket provider for real-time events
+let provider: ethers.WebSocketProvider | ethers.JsonRpcProvider;
+let contract: ethers.Contract;
 
-// Event listener functions
+try {
+  // Try WebSocket first
+  provider = new ethers.WebSocketProvider(WS_URL);
+  console.log("✅ Using WebSocket provider");
+} catch (error) {
+  // Fallback to HTTP with polling
+  provider = new ethers.JsonRpcProvider(RPC_URL);
+  console.log("⚠️ WebSocket unavailable, using HTTP provider with polling");
+}
+
+contract = new ethers.Contract(CONTRACT_ADDRESS, contractAbi, provider);
+
 export class EventListenerService {
   private isListening = false;
+  private lastProcessedBlock: number = 0;
+  private pollingInterval: NodeJS.Timeout | null = null;
 
-  // Start listening to all events
   async startListening() {
     if (this.isListening) {
       console.log("Event listener already running");
@@ -27,53 +40,66 @@ export class EventListenerService {
     this.isListening = true;
     console.log("🎧 Starting event listeners...");
 
-    // Listen to SnowballPurchased events
-    contract.on("SnowballPurchased", async (blockId, buyer, quantity, totalPaid, event) => {
-      console.log("📦 SnowballPurchased event detected");
-      await this.handleSnowballPurchased(blockId, buyer, quantity, totalPaid, event);
-    });
+    // Get current block number to start from
+    const currentBlock = await provider.getBlockNumber();
+    this.lastProcessedBlock = currentBlock;
+    console.log(`📍 Starting from block: ${currentBlock}`);
 
-    // Listen to ReferrerSet events
-    contract.on("ReferrerSet", async (user, referrer, event) => {
-      console.log("🔗 ReferrerSet event detected");
-      await this.handleReferrerSet(user, referrer, event);
-    });
+    // Use queryFilter with block range polling instead of live filters
+    this.startPolling();
 
-    // Listen to ReferralBonusAccrued events
-    contract.on("ReferralBonusAccrued", async (referrer, level, amount, event) => {
-      console.log("💰 ReferralBonusAccrued event detected");
-      await this.handleReferralBonusAccrued(referrer, level, amount, event);
-    });
-
-    // Listen to RewardPaid events
-    contract.on("RewardPaid", async (blockId, user, rewardAmount, event) => {
-      console.log("🎁 RewardPaid event detected");
-      await this.handleRewardPaid(blockId, user, rewardAmount, event);
-    });
-
-    // Listen to ReferralRewardsClaimed events
-    contract.on("ReferralRewardsClaimed", async (user, amount, event) => {
-      console.log("💵 ReferralRewardsClaimed event detected");
-      await this.handleReferralRewardsClaimed(user, amount, event);
-    });
-
-    // Listen to BlockCreated events
-    contract.on("BlockCreated", async (blockId, snowballCount, event) => {
-      console.log("🆕 BlockCreated event detected");
-      await this.handleBlockCreated(blockId, snowballCount, event);
-    });
-
-    // Listen to BlockFullyClaimed events
-    contract.on("BlockFullyClaimed", async (blockId, timestamp, event) => {
-      console.log("✅ BlockFullyClaimed event detected");
-      await this.handleBlockFullyClaimed(blockId, timestamp, event);
-    });
-
-    console.log("✅ All event listeners started successfully");
+    console.log("✅ Event listener started with polling mechanism");
   }
 
-  // Stop listening
+  private startPolling() {
+    // Poll every 10 seconds for new events
+    this.pollingInterval = setInterval(async () => {
+      try {
+        const currentBlock = await provider.getBlockNumber();
+        
+        if (currentBlock > this.lastProcessedBlock) {
+          console.log(`🔍 Checking blocks ${this.lastProcessedBlock + 1} to ${currentBlock}`);
+          await this.processBlockRange(this.lastProcessedBlock + 1, currentBlock);
+          this.lastProcessedBlock = currentBlock;
+        }
+      } catch (error) {
+        console.error("Polling error:", error);
+      }
+    }, 10000); // Poll every 10 seconds
+  }
+
+  private async processBlockRange(fromBlock: number, toBlock: number) {
+    try {
+      // Query all events in the block range
+      const events = [
+        { name: "SnowballPurchased", handler: this.handleSnowballPurchased.bind(this) },
+        { name: "ReferrerSet", handler: this.handleReferrerSet.bind(this) },
+        { name: "ReferralBonusAccrued", handler: this.handleReferralBonusAccrued.bind(this) },
+        { name: "RewardPaid", handler: this.handleRewardPaid.bind(this) },
+        { name: "ReferralRewardsClaimed", handler: this.handleReferralRewardsClaimed.bind(this) },
+        { name: "BlockCreated", handler: this.handleBlockCreated.bind(this) },
+        { name: "BlockFullyClaimed", handler: this.handleBlockFullyClaimed.bind(this) },
+      ];
+
+      for (const eventConfig of events) {
+        const filter = contract.filters[eventConfig.name]();
+        const eventLogs = await contract.queryFilter(filter, fromBlock, toBlock);
+
+        for (const log of eventLogs) {
+          console.log(`📦 ${eventConfig.name} event detected in block ${log.blockNumber}`);
+          await eventConfig.handler(...log.args, log);
+        }
+      }
+    } catch (error) {
+      console.error("Error processing block range:", error);
+    }
+  }
+
   stopListening() {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
     contract.removeAllListeners();
     this.isListening = false;
     console.log("🛑 Event listeners stopped");
@@ -88,8 +114,8 @@ export class EventListenerService {
     event: any
   ) {
     try {
-      const txHash = event.log.transactionHash;
-      const blockNumber = event.log.blockNumber;
+      const txHash = event.transactionHash;
+      const blockNumber = event.blockNumber;
 
       // Get user from database
       const [users] = await pool.execute(
@@ -98,17 +124,26 @@ export class EventListenerService {
       );
 
       if ((users as any[]).length === 0) {
-        console.log(`User ${buyer} not found in database`);
+        console.log(`User ${buyer} not found in database, skipping`);
         return;
       }
 
       const userId = (users as any[])[0].id;
 
-      // Insert or update purchase record
+      // Check if already recorded
+      const [existing] = await pool.execute(
+        "SELECT id FROM purchases WHERE transactionHash = ?",
+        [txHash]
+      );
+
+      if ((existing as any[]).length > 0) {
+        return; // Already processed
+      }
+
+      // Insert purchase record
       await pool.execute(
         `INSERT INTO purchases (userId, walletAddress, snowballsPurchased, totalBlockSize, blockNumber, transactionHash)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE snowballsPurchased = snowballsPurchased + VALUES(snowballsPurchased)`,
+         VALUES (?, ?, ?, ?, ?, ?)`,
         [userId, buyer, Number(quantity), Number(quantity), blockNumber, txHash]
       );
 
@@ -119,7 +154,7 @@ export class EventListenerService {
         [totalPaidInINRT, userId]
       );
 
-      console.log(`✅ Recorded purchase: ${quantity} snowballs by ${buyer}`);
+      console.log(`✅ Recorded purchase: ${quantity} snowballs by ${buyer} in block ${blockNumber}`);
     } catch (error) {
       console.error("Error handling SnowballPurchased:", error);
     }
@@ -142,7 +177,7 @@ export class EventListenerService {
       const sponsorReferralId = (referrerData as any[])[0].referralId;
 
       await pool.execute(
-        "UPDATE users SET sponsorReferralId = ? WHERE walletAddress = ?",
+        "UPDATE users SET sponsorReferralId = ? WHERE walletAddress = ? AND sponsorReferralId IS NULL",
         [sponsorReferralId, user]
       );
 
@@ -189,7 +224,6 @@ export class EventListenerService {
   ) {
     try {
       const rewardInINRT = ethers.formatUnits(rewardAmount, 18);
-
       console.log(`✅ Reward paid: ${rewardInINRT} INRT to ${user} for block ${blockId}`);
     } catch (error) {
       console.error("Error handling RewardPaid:", error);
@@ -232,5 +266,4 @@ export class EventListenerService {
   }
 }
 
-// Singleton instance
 export const eventListener = new EventListenerService();

@@ -3,12 +3,40 @@
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useState, useEffect } from "react";
 
 export function Navbar() {
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+
+  // Prevent hydration mismatch
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <nav style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "20px 40px",
+        backgroundColor: "#1a1a1a",
+        color: "white",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.1)"
+      }}>
+        <div style={{ display: "flex", gap: "30px", alignItems: "center" }}>
+          <Link href="/" style={{ fontSize: "1.5rem", fontWeight: "bold", textDecoration: "none", color: "white" }}>
+            🌪️ Typhoon
+          </Link>
+        </div>
+        <div>Loading...</div>
+      </nav>
+    );
+  }
 
   return (
     <nav style={{
