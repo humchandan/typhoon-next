@@ -1,5 +1,11 @@
 import { WagmiWrapper } from "@/components/WagmiWrapper";
+import { Navbar } from "@/components/Navbar";
 import "./globals.css";
+
+export const metadata = {
+  title: "Typhoon Investment",
+  description: "Decentralized Investment Platform",
+};
 
 export default function RootLayout({
   children,
@@ -8,8 +14,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        <WagmiWrapper>{children}</WagmiWrapper>
+      <body style={{ margin: 0, fontFamily: "Arial, sans-serif" }}>
+        <WagmiWrapper>
+          <Navbar />
+          <main>{children}</main>
+        </WagmiWrapper>
       </body>
     </html>
   );
