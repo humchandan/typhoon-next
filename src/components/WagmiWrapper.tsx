@@ -4,28 +4,28 @@ import React from "react";
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { avalancheFuji } from "wagmi/chains";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { injected, walletConnect } from '@wagmi/connectors';
+import { injected, walletConnect } from "wagmi/connectors";
 
-const queryClient = new QueryClient();
-
-const projectId = '4ee7fd7bb097aa1e377bea8703eae0b6';
+const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID!;
+const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL!;
 
 const wagmiConfig = createConfig({
-  autoConnect: true,
-  connectors: [
-    injected(),   // Injected wallets like MetaMask
-    walletConnect({ projectId }), // WalletConnect QR modal
-  ],
-  publicClient: http('https://api.avax-test.network/ext/bc/C/rpc'),
   chains: [avalancheFuji],
+  connectors: [
+    injected(),
+    walletConnect({ projectId }),
+  ],
+  transports: {
+    [avalancheFuji.id]: http(rpcUrl),
+  },
 });
+
+const queryClient = new QueryClient();
 
 export function WagmiWrapper({ children }: { children: React.ReactNode }) {
   return (
     <WagmiProvider config={wagmiConfig}>
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </WagmiProvider>
   );
 }
